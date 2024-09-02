@@ -47,8 +47,8 @@ data <- path %>%
 # can create df versions for 'resurrection' and 'lemon' analysis from "data" when/if desired
 
 # remove rows (larvae) with specific ambiguous phenotype (lemons), allocation errors (miss), and pipet/handling process death (died_dried) to make clean ready to analyze survivorship dataset
-good <-data %>% filter (miss=="0",lemon=="0", died_dried=="0") %>% 
-  select(-miss, -resurrection, -lemon, -died_dried)%>%
+good <-data %>% #filter (miss=="0",lemon=="0", died_dried=="0") %>% 
+  select(-miss, -resurrection, -lemon, -died_dried, -two, -settle)%>%
   select(-row,-column) %>% #initial allocation, not actual assessment
   pivot_longer(cols=-c("plate","well", "conical", "ramp-treatment", "stress-treatment"),names_to ="time", values_to ="value")%>%
   mutate(plate=as.factor(plate)) 
@@ -70,140 +70,165 @@ data<-data%>%
   mutate(time=as.numeric(time))
 ```
 
+Remove outlier plate 51
+```{r}
+data<-data%>%
+  filter(!plate=="51")%>%
+  filter(!plate=="65")%>%
+  droplevels()
+```
+
 Create data frames with control and high temperature subsets. 
 ```{r}
-control<-data%>%filter(stress-treatment=="Control")
-stress<-data%>%filter(stress-treatment=="Stress")
+ambient<-data%>%filter(`stress-treatment`=="ambient")
+stress<-data%>%filter(`stress-treatment`=="stress")
 ```
+
+Check lengths. 
+```{r}
+length(unique(ambient$plate))
+length(unique(stress$plate))
+```
+
+Rename to status. 
+```{r}
+ambient<-ambient%>%
+  rename(status=value, ramp_treatment=`ramp-treatment`, stress_treatment=`stress-treatment`)
+
+stress<-stress%>%
+  rename(status=value, ramp_treatment=`ramp-treatment`, stress_treatment=`stress-treatment`)
+
+ambient<-as.data.frame(ambient)
+stress<-as.data.frame(stress)
+
+ambient$ramp_treatment<-as.factor(ambient$ramp_treatment)
+ambient$stress_treatment<-as.factor(ambient$stress_treatment)
+ambient$conical<-as.factor(ambient$conical)
+ambient$plate<-as.factor(ambient$plate)
+ambient$well<-as.factor(ambient$well)
+
+stress$ramp_treatment<-as.factor(stress$ramp_treatment)
+stress$stress_treatment<-as.factor(stress$stress_treatment)
+stress$conical<-as.factor(stress$conical)
+stress$plate<-as.factor(stress$plate)
+stress$well<-as.factor(stress$well)
+```
+
 
 # Generate Kaplan Meier survival curves 
 
-## Control
+## Ambient stress
 
 ```{r}
-s1 <- survfit(Surv(time, status) ~ ramp-treatment, data = control)
+s1 <- survfit(Surv(time, status) ~ ramp_treatment, data = ambient)
 str(s1)
 ```
 
 Plot the survival function
 ```{r}
-survfit2(Surv(time, status) ~ hardening+temperature, data = control) %>% 
+survfit2(Surv(time, status) ~ ramp_treatment, data = ambient, conf.type="plain", conf.int=0.95) %>% 
   ggsurvfit() +
   labs(
-    x = "Hours",
+    x = "Time point",
     y = "Survival probability"
   )
 ```
 
-Estimate survival at 24 hours. 
-```{r}
-summary(survfit(Surv(time, status) ~ hardening, data = control), times = 24)
-```
-
-Estimated survival is ~87% in control temperature. 
-
 Use a log rank model to determine statistical differences in curves. 
 ```{r}
-survdiff(Surv(time, status) ~ hardening, data = control)
+survdiff(Surv(time, status) ~ ramp_treatment, data = ambient)
 
 # Call:
-# survdiff(formula = Surv(time, status) ~ hardening, data = control)
+# survdiff(formula = Surv(time, status) ~ ramp_treatment, data = ambient)
 # 
-#                                     N Observed Expected (O-E)^2/E (O-E)^2/V
-# hardening=control                 360       18     19.1   0.06234   0.11188
-# hardening=fresh-water             240       12     12.7   0.04156   0.06630
-# hardening=fresh-water-temperature 240       16     12.7   0.84156   1.34252
-# hardening=immune                  240       13     12.7   0.00584   0.00932
-# hardening=temperature             240       11     12.7   0.23442   0.37396
+#                           N Observed Expected (O-E)^2/E (O-E)^2/V
+# ramp_treatment=ambient 1440       29     54.5      11.9      25.3
+# ramp_treatment=ramp    1440       80     54.5      11.9      25.3
 # 
-#  Chisq= 1.5  on 4 degrees of freedom, p= 0.8 
+#  Chisq= 25.3  on 1 degrees of freedom, p= 5e-07 
 ```
-There is no difference in survival at 18C at p=0.8. 
+Significant difference in survival. 
 
 Analyze again with a Cox proportional hazards model. 
 ```{r}
-coxph(Surv(time, status) ~ hardening, data = control)
+coxph(Surv(time, status) ~ ramp_treatment, data = ambient)
 
-# coxph(formula = Surv(time, status) ~ hardening, data = control)
+# Call:
+# coxph(formula = Surv(time, status) ~ ramp_treatment, data = ambient)
 # 
-#                                      coef exp(coef) se(coef)      z     p
-# hardeningfresh-water              0.02005   1.02025  0.37269  0.054 0.957
-# hardeningfresh-water-temperature  0.36099   1.43475  0.34368  1.050 0.294
-# hardeningimmune                   0.07687   1.07991  0.36398  0.211 0.833
-# hardeningtemperature             -0.06777   0.93447  0.38271 -0.177 0.859
+#                      coef exp(coef) se(coef)     z       p
+# ramp_treatmentramp 1.0429    2.8376   0.2168 4.811 1.5e-06
 # 
-# Likelihood ratio test=1.57  on 4 df, p=0.8147
-# n= 1320, number of events= 70  
+# Likelihood ratio test=26.28  on 1 df, p=2.958e-07
+# n= 2880, number of events= 109  
 
-coxph(Surv(time, status) ~ hardening, data = control) %>% 
+coxph(Surv(time, status) ~ ramp_treatment, data = ambient) %>% 
   tbl_regression(exp = TRUE) 
 ```
-Control is the reference level. No differences in survival at 18C. 
+
+```{r}
+library(survminer)
+library(ggplot2)
+
+ggsurvplot(s1, conf.int = 0.95, censor= F,
+           ggtheme = theme_minimal())
+```
 
 # Generate Kaplan Meier survival curves 
 
-## Stress temperature 42C
+## Stress temperature
 
 ```{r}
-s2 <- survfit(Surv(time, status) ~ hardening, data = stress)
+s2 <- survfit(Surv(time, status) ~ ramp_treatment, data = stress)
 str(s2)
 ```
 
 Plot the survival function
 ```{r}
-survfit2(Surv(time, status) ~ hardening+temperature, data = stress) %>% 
+survfit2(Surv(time, status) ~ ramp_treatment, data = stress) %>% 
   ggsurvfit() +
   labs(
-    x = "Hours",
+    x = "Time Point",
     y = "Survival probability"
   )
 ```
 
-Estimate survival at 24 hours. 
-```{r}
-summary(survfit(Surv(time, status) ~ hardening, data = stress), times = 24)
-```
-
-Estimated stress survival is 12-26%. Temperature hardened is the lowest.    
-
 Use a log rank model to determine statistical differences in curves. 
 ```{r}
-survdiff(Surv(time, status) ~ hardening, data = stress)
+survdiff(Surv(time, status) ~ ramp_treatment, data = stress)
 
 # Call:
-# survdiff(formula = Surv(time, status) ~ hardening, data = stress)
+# survdiff(formula = Surv(time, status) ~ ramp_treatment, data = stress)
 # 
-#                                     N Observed Expected (O-E)^2/E (O-E)^2/V
-# hardening=control                 360      116    133.1     2.195     5.048
-# hardening=fresh-water             240       83     88.7     0.370     0.756
-# hardening=fresh-water-temperature 240       83     88.7     0.370     0.756
-# hardening=immune                  240       97     88.7     0.771     1.577
-# hardening=temperature             240      109     88.7     4.632     9.470
+#                           N Observed Expected (O-E)^2/E (O-E)^2/V
+# ramp_treatment=ambient 1152       47     32.4      6.53      12.3
+# ramp_treatment=ramp    1440       26     40.6      5.22      12.3
 # 
-#  Chisq= 13.9  on 4 degrees of freedom, p= 0.007 
+#  Chisq= 12.3  on 1 degrees of freedom, p= 5e-04  
 ```
-There is a significant difference in survival at p=0.007. 
 
 Analyze again with a Cox proportional hazards model. 
 ```{r}
-coxph(Surv(time, status) ~ hardening, data = stress)
+coxph(Surv(time, status) ~ ramp_treatment, data = stress)
 
 # Call:
-# coxph(formula = Surv(time, status) ~ hardening, data = stress)
+# coxph(formula = Surv(time, status) ~ ramp_treatment, data = stress)
 # 
-#                                     coef exp(coef) se(coef)     z       p
-# hardeningfresh-water             0.08431   1.08797  0.14377 0.586 0.55759
-# hardeningfresh-water-temperature 0.04540   1.04644  0.14380 0.316 0.75224
-# hardeningimmune                  0.20959   1.23317  0.13763 1.523 0.12780
-# hardeningtemperature             0.40947   1.50602  0.13343 3.069 0.00215
+#                       coef exp(coef) se(coef)      z        p
+# ramp_treatmentramp -0.8340    0.4343   0.2444 -3.412 0.000645
 # 
-# Likelihood ratio test=11.11  on 4 df, p=0.02538
-# n= 1320, number of events= 488 
+# Likelihood ratio test=12.27  on 1 df, p=0.0004598
+# n= 2592, number of events= 73 
 
-coxph(Surv(time, status) ~ hardening, data = stress) %>% 
+coxph(Surv(time, status) ~ ramp_treatment, data = stress) %>% 
   tbl_regression(exp = TRUE) 
 ```
-Control is the reference level. There is a significant difference between control and temperature hardening survival. 
+
+```{r}
+ggsurvplot(s2, conf.int = 0.95, censor= F,
+           ggtheme = theme_minimal())
+```
+
 
 # Generate plots 
  
@@ -212,43 +237,91 @@ Set theme.
 my_theme<-theme_classic()
 ```
 
-Control
+ambient
 ```{r}
-plot1<-survfit2(Surv(time, status) ~ hardening, data = control) %>% 
+plot1<-survfit2(Surv(time, status) ~ ramp_treatment, data = ambient) %>% 
   ggsurvfit() +
   labs(
-    x = "Hours",
+    x = "Time Point",
     y = "Survival probability",
-    title="18°C"
+    title="Ambient"
   )+
+  scale_color_manual(values=c("blue", "red"))+
+  scale_fill_manual(values=c("blue", "red"))+
+  ylim(0.6,1)+
+  my_theme+
+  theme(legend.position="none");plot1
+
+plot1<-plot1+add_confidence_interval();plot1
+```
+
+Ambient by plates 
+```{r}
+plot1b<-survfit2(Surv(time, status) ~ plate, data = ambient) %>% 
+  ggsurvfit() +
+  labs(
+    x = "Time Point",
+    y = "Survival probability",
+    title="Ambient"
+  )+
+  #scale_color_manual(values=c("blue", "red"))+
+  #scale_fill_manual(values=c("blue", "red"))+
   ylim(0,1)+
   my_theme+
-  geom_text(x=10, y=0.2, label="Cox PH p=0.8")+
-  theme(legend.position="none")
+  theme(legend.position="right");plot1b
+
+plot1b+add_confidence_interval()
 ```
 
 Stress
 ```{r}
-plot2<-survfit2(Surv(time, status) ~ hardening, data = stress) %>% 
+plot2<-survfit2(Surv(time, status) ~ ramp_treatment, data = stress) %>% 
   ggsurvfit() +
   labs(
-    x = "Hours",
+    x = "Time Point",
     y = "Survival probability",
-    title = "42°C"
+    title = "Stress", 
+    legend = "Ramp Treatment"
   )+
-  ylim(0,1)+
+  ylim(0.6, 1)+
+  scale_color_manual(values=c("blue", "red"))+
+  scale_fill_manual(values=c("blue", "red"))+
   my_theme+
-  geom_text(x=10, y=0.2, label="Cox PH p=0.025")+
-  geom_text(x=10, y=0.15, label="Temperature vs control p=0.002")+
-  geom_text(x=10, y=0.10, label="All others vs control p>0.05")+
-  theme(legend.position="right")
+ # geom_text(x=10, y=0.2, label="Cox PH p=0.025")+
+  #geom_text(x=10, y=0.15, label="Temperature vs control p=0.002")+
+  #geom_text(x=10, y=0.10, label="All others vs control p>0.05")+
+  theme(legend.position="right");plot2
+
+plot2<-plot2+add_confidence_interval();plot2
+```
+
+Stress by plates. 
+```{r}
+plot2b<-survfit2(Surv(time, status) ~ plate, data = stress) %>% 
+  ggsurvfit() +
+  labs(
+    x = "Time Point",
+    y = "Survival probability",
+    title = "Stress Treatment", 
+    legend = "Ramp Treatment"
+  )+
+  #ylim(0.8, 1)+
+  #scale_color_manual(values=c("blue", "red"))+
+  #scale_fill_manual(values=c("blue", "red"))+
+  my_theme+
+ # geom_text(x=10, y=0.2, label="Cox PH p=0.025")+
+  #geom_text(x=10, y=0.15, label="Temperature vs control p=0.002")+
+  #geom_text(x=10, y=0.10, label="All others vs control p>0.05")+
+  theme(legend.position="right");plot2b
+
+plot2b+add_confidence_interval()
 ```
 
 Assemble plot
 ```{r}
-plots<-plot_grid(plot1, plot2, rel_widths=c(0.65,1), ncol=2)
+plots<-plot_grid(plot1, plot2, rel_widths=c(0.75,1), ncol=2)
 
-ggsave(plots, filename="figures/survival/KMcurves.png", width=10, height=4)
+ggsave(plots, filename="figures/KMcurves.png", width=10, height=4)
 ```
 
 
